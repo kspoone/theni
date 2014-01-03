@@ -1,33 +1,54 @@
 #!/usr/bin/env python
 
+"""Usage
+
+  theni.py [options]
+
+
+"""
+
 import base64
+import codecs
+import getopt
 import getpass
-import logging as log
-import os
+import logging
+import os.path
 import pysvn
 import time
 import urlparse
+import sys
+
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+from ConfigParser import ConfigParser
 from wsgiref.handlers import format_date_time
 from xml.etree import ElementTree as ET
-from mhlib import Folder
 
 
-log.basicConfig(level=log.INFO, format='%(levelname)s %(message)s')
+log = logging.getLogger()
+
+logging.basicConfig(
+        level=logging.INFO,
+        format='%(levelname)s %(message)s',
+        )
+
+
+GUID_NULL = '{00000000-0000-0000-0000-000000000000}'
 
 
 class SvnDB:
     def __init__(self, base = '.'):
         if not base.endswith('/'):
             base += '/'
+
         self.wcbase = base
         self.svn = pysvn.Client()
-
         self.object_type_db1 = {}
         self.object_type_db2 = {}
+        self.users = {}
+
         info = self.info('')
 
-        log.info('started vcs client on wcbase "%s"', base)
+        log.info('started svn client on wcbase "%s"', base)
         log.info(' user: "%s"', getpass.getuser())
         log.info(' url: "%s"', info.URL)
 
@@ -36,15 +57,12 @@ class SvnDB:
             raise Exception('Not a proper ENI/SVN working capy.')
 
         log.info('reading enisvn db config from "%s"', thenisvn_conf)
-        self.users = {}
-        for line in open(thenisvn_conf):
-            line = line.split('#')[0].strip()
-            if not line: continue
-            k, v = line.split('=')
-            if k == 'user':
-                user, info = v.split(',')
-                log.info(' added user %s, %s', user, info)
-                self.users[user] = info
+        config = ConfigParser()
+        config.readfp(codecs.open(thenisvn_conf, 'r', 'utf8'))
+        for login, v in config.items('User'):
+            fullname, info = v.split(',')
+            log.info(' added user %s, %s, %s', login, fullname, info)
+            self.users[login] = fullname, info
 
     def ls(self, path, recursive, folders_only):
         path = urlparse.urljoin(self.wcbase, path)
@@ -148,7 +166,8 @@ class SvnDB:
         return self.object_type_db1.get(object_type, ('', ''))
 
     def get_object_type(self, ext):
-        return self.object_type_db2.get(ext, '')
+        ext = ext[1:] if ext.startswith('.') else ext
+        return self.object_type_db2.get(ext, GUID_NULL)
 
     def get_object_types(self):
         return self.object_type_db1.keys()
@@ -236,8 +255,8 @@ class EniHandshake:
         log.debug('ENI handshake request, username: %s', self.__username)
 
     def response(self):
-        fingerprint1 = '0' * 32
-        fingerprint2 = '0' * 32
+        fingerprint1 = '1' * 32
+        fingerprint2 = '2' * 32
         return '<handshake user-name="%s" fingerprint-1="%s" fingerprint-2="%s"/>' % (
                 self.__username, fingerprint1, fingerprint2
                 )
@@ -277,7 +296,7 @@ class BaseEniCmd:
         return s.text.strip() if s is not None else default
 
     def get_bool(self, elem, default = 'false'):
-        return self.get(elem, default).lower == 'true'
+        return self.get(elem, default).lower() == 'true'
 
     def do(self):
         try:
@@ -476,11 +495,8 @@ class EniCmd_dir(BaseEniCmd):
                 s += ' <access>%s</access>\n' % EniAccess(0x0FFF)
             elif t == pysvn.node_kind.file:
                 n, e = os.path.splitext(p)
-                e = e[1:] if e.startswith('.') else e
-                print n, e
                 guid = vcs.get_object_type(e)
-                print guid
-                s += ' <object-path>%s</object-path>\n' % n
+                s += ' <object-path>%s</object-path>\n' % (n if guid else p)
                 s += ' <object-type>%s</object-type>\n' % guid
                 s += ' <access>%s</access>\n' % EniAccess(0x00FF)
                 #s += '<change-date>%s</change-date>\n' % format_date_time(self.info.last_changed_date)
@@ -583,16 +599,16 @@ class EniCmd_get_object_info(BaseEniCmd):
     def _do(self):
         log.warn('half-implemented cmd: %s', self._eni_cmd)
 
-    # XXX
     def _response(self):
-        s = ''
-        s += '<object-path>%s</object-path>\n' % self.object_path
-        s += '<object-type>%s</object-type>\n' % self.object_type
-        s += '<change-date>%s</change-date>\n' % ''
-        s += '<checked-out-by>%s</checked-out-by>\n' % ''
-        s += '<check-out-comment>%s</check-out-comment>\n' % ''
-        s += '<access>%s</access>\n' % EniAccess(0x0700)
-        return s
+        d = {
+            'object-path' : self.object_path,
+            'object-type\n' : self.object_type,
+            'change-date' : '',
+            'checked-out-by' : '',
+            'check-out-comment' : '',
+            'access' : EniAccess(0x0700),
+            }
+        return d
 
 
 class EniCmd_get_object_type(BaseEniCmd):
@@ -605,12 +621,11 @@ class EniCmd_get_object_type(BaseEniCmd):
 
     def _response(self):
         desc, ext = vcs.get_object_type_info(self.guid)
-        d = {
+        return {
             'guid' : self.guid,
             'extension' : ext,
             'description' : desc,
             }
-        return d
 
 
 class EniCmd_get_object_type_list(BaseEniCmd):
@@ -618,10 +633,10 @@ class EniCmd_get_object_type_list(BaseEniCmd):
         BaseEniCmd.__init__(self, eni_cmd, req_etree)
 
     def _response(self):
-        d = {}
+        s = ''
         for guid in vcs.get_object_types():
-            d['guid'] = guid
-        return d
+            s += '<guid>%s</guid>\n' % guid
+        return s
 
 
 class EniCmd_register_object_types(BaseEniCmd):
@@ -638,13 +653,13 @@ class EniCmd_get_server_settings(BaseEniCmd):
 
     def _response(self):
         return {
-                'comm-timeout' : 10,
-                'idle-interval' : 60,
-                'allow-anonymous' : 'false',
-                'client-expiration' : 10,
-                'max-trials' : 10,
-                'active-driver' : 'theni:svn',
-                }
+            'comm-timeout' : 10,
+            'idle-interval' : 60,
+            'allow-anonymous' : 'false',
+            'client-expiration' : 10,
+            'max-trials' : 10,
+            'active-driver' : 'theni:svn',
+            }
 
 
 class EniCmd_get_users(BaseEniCmd):
@@ -653,11 +668,11 @@ class EniCmd_get_users(BaseEniCmd):
 
     def _response(self):
         s = ''
-        for user, info in vcs.users.items():
+        for login, k in vcs.users.items():
             s += '<user>\n'
-            s += '<name>%s</name>\n' % user
-            s += '<full-name>%s</full-name>\n' % info
-            s += '<description>%s</description>\n' % '...'
+            s += '<name>%s</name>\n' % login
+            s += '<full-name>%s</full-name>\n' % k[0]
+            s += '<description>%s</description>\n' % k[1]
             s += '<active>%s</active>\n' % True
             s += '<logged-in>%s</logged-in>\n' % True
             s += '</user>\n'
@@ -879,10 +894,36 @@ class EniHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], 'c:hv', [
+            'config',
+            'help',
+            'verbose',
+            ])
+    except getopt.GetoptError, err:
+        print str(err) # will print something like "option -a not recognized"
+        sys.exit(__doc__)
+
+    log_level = log.WARN
+
+    config = None
+
+    for o, a in opts:
+        if o in ('-c', '--config'):
+            config = a
+        elif o in ('-d', '--debug'):
+            log_level = log.DEBUG
+        elif o in ('-h', '--help'):
+            usage()
+        elif o in ('-v', '--verbose'):
+            log_level = log.INFO
+        else:
+            assert False, "unhandled option"
+
     HOST, PORT = 'localhost', 80
     try:
         server = HTTPServer((HOST, PORT), EniHandler)
-        log.info('started eni vcs server on %s, port %s', HOST, PORT)
+        log.info('started eni svn server on %s, port %s', HOST, PORT)
         server.serve_forever()
     except KeyboardInterrupt:
         log.warn('^C received, shutting down server')

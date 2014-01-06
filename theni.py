@@ -24,15 +24,40 @@ from wsgiref.handlers import format_date_time
 from xml.etree import ElementTree as ET
 
 
-log = logging.getLogger()
+OBJECT_TYPES = (
+        ('{9A9A3E90-D363-11d5-823E-0050DA6124B7}', 'pou', 'CoDeSys POU'),
+        ('{9A9A3E91-D363-11d5-823E-0050DA6124B7}', 'dut', 'CoDeSys Data Unit Type'),
+        ('{9A9A3E92-D363-11d5-823E-0050DA6124B7}', 'gvl', 'CoDeSys Global Variable List'),
+        ('{9A9A3E93-D363-11d5-823E-0050DA6124B7}', 'vis', 'CoDeSys Visualization'),
+        ('{9A9A3E94-D363-11d5-823E-0050DA6124B7}', 'cnc', 'CoDeSys CNC List'),
+        ('{9A9A3E95-D363-11d5-823E-0050DA6124B7}', 'lim', 'CoDeSys Library Manager'),
+        ('{9A9A3E96-D363-11d5-823E-0050DA6124B7}', 'trs', 'CoDeSys Target Settings'),
+        ('{9A9A3E97-D363-11d5-823E-0050DA6124B7}', 'tio', 'CoDeSys Tool Instance'),
+        ('{9A9A3E98-D363-11d5-823E-0050DA6124B7}', 'tmo', 'CoDeSys Tool Manager'),
+        ('{9A9A3E99-D363-11d5-823E-0050DA6124B7}', 'od', 'CoDeSys Object Dictionary'),
+        ('{9A9A3E9A-D363-11d5-823E-0050DA6124B7}', 'pcf', 'CoDeSys PLC Configuration'),
+        ('{9A9A3E9B-D363-11d5-823E-0050DA6124B7}', 'pin', 'CoDeSys Project Information'),
+        ('{9A9A3E9C-D363-11d5-823E-0050DA6124B7}', 'tco', 'CoDeSys Task Configuration'),
+        ('{9A9A3E9D-D363-11d5-823E-0050DA6124B7}', 'tce', 'CoDeSys Trace'),
+        ('{9A9A3E9E-D363-11d5-823E-0050DA6124B7}', 'wen', 'CoDeSys Watch Manager'),
+        ('{9A9A3E9F-D363-11d5-823E-0050DA6124B7}', 'sym', 'CoDeSys Symbol Information'),
+        ('{9A9A3EA0-D363-11d5-823E-0050DA6124B7}', 'sdb', 'CoDeSys Symbol Information'),
+        ('{9A9A3EA1-D363-11d5-823E-0050DA6124B7}', 'bop', 'CoDeSys Boot Project'),
+        ('{9A9A3EA2-D363-11d5-823E-0050DA6124B7}', 'acf', 'CoDeSys Alarm Configuration'),
+        ('{9A9A3EA3-D363-11d5-823E-0050DA6124B7}', 'cam', 'CoDeSys CAM list'),
+        )
+
+GUID_NULL = '{00000000-0000-0000-0000-000000000000}'
+
+
+logger = logging.getLogger()
 
 logging.basicConfig(
         level=logging.INFO,
         format='%(levelname)s %(message)s',
         )
 
-
-GUID_NULL = '{00000000-0000-0000-0000-000000000000}'
+vcs = None
 
 
 class SvnDB:
@@ -48,25 +73,25 @@ class SvnDB:
 
         info = self.info('')
 
-        log.info('started svn client on wcbase "%s"', base)
-        log.info(' user: "%s"', getpass.getuser())
-        log.info(' url: "%s"', info.URL)
+        logger.info('started svn client on wcbase "%s"', base)
+        logger.info(' user: "%s"', getpass.getuser())
+        logger.info(' url: "%s"', info.URL)
 
         thenisvn_conf = os.path.join(self.wcbase, 'enisvndb.conf')
         if not os.path.exists(thenisvn_conf):
-            raise Exception('Not a proper ENI/SVN working capy.')
+            raise Exception('Not a proper theni:svn working capy.')
 
-        log.info('reading enisvn db config from "%s"', thenisvn_conf)
+        logger.info('reading theni:svn config from "%s"', thenisvn_conf)
         config = ConfigParser()
         config.readfp(codecs.open(thenisvn_conf, 'r', 'utf8'))
         for login, v in config.items('User'):
             fullname, info = v.split(',')
-            log.info(' added user %s, %s, %s', login, fullname, info)
+            logger.info(' added user %s, %s, %s', login, fullname, info)
             self.users[login] = fullname, info
 
     def ls(self, path, recursive, folders_only):
         path = urlparse.urljoin(self.wcbase, path)
-        log.info('svn ls %s', path)
+        logger.info('svn ls %s', path)
         entry_list = self.svn.ls(path.strip(), recurse=recursive)
         if folders_only:
             entry_list = filter(lambda e: e.kind == pysvn.node_kind.dir, entry_list)
@@ -74,65 +99,65 @@ class SvnDB:
 
     def mkfile(self, object_path, object_type, content, comment):
         wcpath = self._wcpath(object_path, object_type)
-        log.info('svn mkfile: write %s', wcpath)
+        logger.info('svn mkfile: write %s', wcpath)
         with open(wcpath, 'wb') as f:
             f.write(content)
         try:
-            log.info('svn mkfile: add %s', wcpath)
+            logger.info('svn mkfile: add %s', wcpath)
             self.svn.add(wcpath)
-            log.info('svn mkfile: propset %s = %s', 'eni:object-type', object_type)
+            logger.info('svn mkfile: propset %s = %s', 'eni:object-type', object_type)
             self.svn.propset('eni:object-type', object_type, wcpath)
         except Exception, e:
-            log.warn(str(e))
-        log.info('svn mkfile: checkin %s', wcpath)
+            logger.warn(str(e))
+        logger.info('svn mkfile: checkin %s', wcpath)
         self.svn.checkin([wcpath], comment)
 
     def mkdir(self, folder_path, comment):
         wcpath = self._wcpath(folder_path)
-        log.info('svn mkdir %s', wcpath)
+        logger.info('svn mkdir %s', wcpath)
         if os.path.exists(wcpath):
             return
         try:
             self.svn.mkdir(wcpath, comment, make_parents=True)
         except Exception, e:
-            log.warn(str(e))
+            logger.warn(str(e))
         self.svn.checkin([wcpath], comment)
 
     def cat(self, object_path, object_type, rev = None):
         self.update_wc()
         wcpath = self._wcpath(object_path, object_type)
-        log.info('svn cat %s', wcpath)
+        logger.info('svn cat %s', wcpath)
         return self.svn.cat(wcpath, self._rev(rev))
 
     def checkin(self, object_path, object_type, content, comment):
         wcpath = self._wcpath(object_path, object_type)
-        log.info('svn checkin: write %s', wcpath)
+        logger.info('svn checkin: write %s', wcpath)
         with open(wcpath, 'wb') as f:
             f.write(content)
-        log.info('svn checkin: checkin %s', wcpath)
+        logger.info('svn checkin: checkin %s', wcpath)
         self.svn.checkin([wcpath], comment)
         self.unlock(object_path, object_type)
 
     def checkout(self, object_path, object_type, comment):
         wcpath = self._wcpath(object_path, object_type)
-        log.info('svn checkout: lock %s', wcpath)
+        logger.info('svn checkout: lock %s', wcpath)
         self.lock(object_path, object_type, comment)
-        log.info('svn mkfile: propset %s = %s', 'eni:check-out-comment', comment)
+        logger.info('svn mkfile: propset %s = %s', 'eni:check-out-comment', comment)
         self.svn.propset('eni:object-type', object_type, wcpath)
 
     def lock(self, object_path, object_type, comment):
         wcpath = self._wcpath(object_path, object_type)
-        log.info('svn lock: lock %s', wcpath)
+        logger.info('svn lock: lock %s', wcpath)
         self.svn.lock(wcpath, comment) #, force=True)
 
     def unlock(self, object_path, object_type):
         wcpath = self._wcpath(object_path, object_type)
-        log.info('svn unlock %s', wcpath)
+        logger.info('svn unlock %s', wcpath)
         self.svn.unlock(wcpath) #, force=True)
 
     def set_rev_prop(self, folder_path, label):
         url = self.get_url()
-        log.info('svn propset --revprop %s', url)
+        logger.info('svn propset --revprop %s', url)
         rev = self.svn.revpropset(
                 'eni:label', label,
                 url,
@@ -143,22 +168,22 @@ class SvnDB:
     def log(self, object_path, object_type = None):
         self.update_wc()
         wcpath = self._wcpath(object_path, object_type)
-        log.info('svn log %s', wcpath)
-        return self.svn.log(wcpath, revprops=['svn:author', 'svn:date', 'svn:log', 'eni:label',])
+        logger.info('svn logger %s', wcpath)
         return self.svn.log(wcpath)
+        return self.svn.log(wcpath, revprops=['svn:author', 'svn:date', 'svn:logger', 'eni:label',])
 
     def info(self, object_path, object_type = None, rev = None):
         self.update_wc()
         wcpath = self._wcpath(object_path, object_type)
-        log.info('svn info %s', wcpath)
+        logger.info('svn info %s', wcpath)
         return self.svn.info2(wcpath, self._rev(rev))[0][1]
 
     def update_wc(self):
-        log.info('svn update %s', self.wcbase)
+        logger.info('svn update %s', self.wcbase)
         self.svn.update(self.wcbase)
 
     def add_object_type_info(self, guid, ext, desc):
-        log.info('add object type: %s .%-3s "%s"', guid, ext, desc)
+        logger.info('add object type: %s .%-3s "%s"', guid, ext, desc)
         self.object_type_db1[guid] = (desc, ext)
         self.object_type_db2[ext] = guid
 
@@ -195,42 +220,6 @@ class SvnDB:
         return short_path
 
 
-vcs = SvnDB('../eni/')
-
-object_types = (
-        ('{9A9A3E90-D363-11d5-823E-0050DA6124B7}', 'pou', 'CoDeSys POU'),
-        ('{9A9A3E91-D363-11d5-823E-0050DA6124B7}', 'dut', 'CoDeSys Data Unit Type'),
-        ('{9A9A3E92-D363-11d5-823E-0050DA6124B7}', 'gvl', 'CoDeSys Global Variable List'),
-        ('{9A9A3E93-D363-11d5-823E-0050DA6124B7}', 'vis', 'CoDeSys Visualization'),
-        ('{9A9A3E94-D363-11d5-823E-0050DA6124B7}', 'cnc', 'CoDeSys CNC List'),
-        ('{9A9A3E95-D363-11d5-823E-0050DA6124B7}', 'lim', 'CoDeSys Library Manager'),
-        ('{9A9A3E96-D363-11d5-823E-0050DA6124B7}', 'trs', 'CoDeSys Target Settings'),
-        ('{9A9A3E97-D363-11d5-823E-0050DA6124B7}', 'tio', 'CoDeSys Tool Instance'),
-        ('{9A9A3E98-D363-11d5-823E-0050DA6124B7}', 'tmo', 'CoDeSys Tool Manager'),
-        ('{9A9A3E99-D363-11d5-823E-0050DA6124B7}', 'od', 'CoDeSys Object Dictionary'),
-        ('{9A9A3E9A-D363-11d5-823E-0050DA6124B7}', 'pcf', 'CoDeSys PLC Configuration'),
-        ('{9A9A3E9B-D363-11d5-823E-0050DA6124B7}', 'pin', 'CoDeSys Project Information'),
-        ('{9A9A3E9C-D363-11d5-823E-0050DA6124B7}', 'tco', 'CoDeSys Task Configuration'),
-        ('{9A9A3E9D-D363-11d5-823E-0050DA6124B7}', 'tce', 'CoDeSys Trace'),
-        ('{9A9A3E9E-D363-11d5-823E-0050DA6124B7}', 'wen', 'CoDeSys Watch Manager'),
-        ('{9A9A3E9F-D363-11d5-823E-0050DA6124B7}', 'sym', 'CoDeSys Symbol Information'),
-        ('{9A9A3EA0-D363-11d5-823E-0050DA6124B7}', 'sdb', 'CoDeSys Symbol Information'),
-        ('{9A9A3EA1-D363-11d5-823E-0050DA6124B7}', 'bop', 'CoDeSys Boot Project'),
-        ('{9A9A3EA2-D363-11d5-823E-0050DA6124B7}', 'acf', 'CoDeSys Alarm Configuration'),
-        ('{9A9A3EA3-D363-11d5-823E-0050DA6124B7}', 'cam', 'CoDeSys CAM list'),
-        )
-
-for object_type in object_types:
-    vcs.add_object_type_info(*object_type)
-
-
-#for i in vcs.log(''):
-#    try:
-#        print '%s eni:label %s' % (i.revision, i.revprops['eni:label'])
-#    except:
-#        pass
-#vcs.set_rev_prop('', 'label')
-
 class EniAccess:
     def __init__(self, access):
         self.access = 0x0000;
@@ -252,7 +241,7 @@ class EniHandshake:
     def __init__(self, req_etree):
         self.__etree = req_etree
         self.__username = self.__etree.attrib['user-name']
-        log.debug('ENI handshake request, username: %s', self.__username)
+        logger.debug('ENI handshake request, username: %s', self.__username)
 
     def response(self):
         fingerprint1 = '1' * 32
@@ -264,7 +253,7 @@ class EniHandshake:
 
 class EniError:
     def __init__(self, eni_cmd, error_code, error_text = ''):
-        log.debug('EniError %s %s %s', eni_cmd, error_code, error_text)
+        logger.debug('EniError %s %s %s', eni_cmd, error_code, error_text)
         self._eni_cmd = eni_cmd
         self.__error_code = error_code
         self.__error_text = error_text
@@ -282,18 +271,23 @@ class EniError:
 
 class BaseEniCmd:
     def __init__(self, eni_cmd, req_etree):
-        log.info('ENI service request, command: %s', eni_cmd.upper())
-        #log.info('REQUEST command: %s (user-name: %s)' % (_eni_cmd, req_etree.attrib['user-name']))
+        logger.info('ENI service request, command: %s', eni_cmd.upper())
+        #logger.info('REQUEST command: %s (user-name: %s)' % (_eni_cmd, req_etree.attrib['user-name']))
         self._eni_cmd = eni_cmd
         self.__etree = req_etree
 
         self.__eni_cmd_elem = self.__etree.find(self._eni_cmd)
         d = self.__etree.find('data')
-        self.text = base64.b64decode(d.text.strip()) if d is not None else ''
+        if d is not None and d.text is not None:
+            self.text = base64.b64decode(d.text.strip())
+        else:
+            self.text = ''
 
     def get(self, elem, default = ''):
-        s = self.__eni_cmd_elem.find(elem)
-        return s.text.strip() if s is not None else default
+        d = self.__eni_cmd_elem.find(elem)
+        if d is not None and d.text is not None:
+            return d.text.strip()
+        return default
 
     def get_bool(self, elem, default = 'false'):
         return self.get(elem, default).lower() == 'true'
@@ -333,7 +327,7 @@ class BaseEniCmd:
 class EniCmd_login(BaseEniCmd):
     def __init__(self, eni_cmd, req_etree):
         BaseEniCmd.__init__(self, eni_cmd, req_etree)
-        log.info(' user-name: %s', req_etree.attrib['user-name'])
+        logger.info(' user-name: %s', req_etree.attrib['user-name'])
 
     def _do(self):
         vcs.update_wc()
@@ -352,11 +346,11 @@ class EniCmd_check_in_object(BaseEniCmd):
         self.object_type = self.get('object-type')
         self.comment = self.get('comment')
 
-        log.info(' object-path: %s', self.object_path)
-        log.info(' object-type: %s', self.object_type)
-        log.info(' comment: %s', self.comment)
+        logger.info(' object-path: %s', self.object_path)
+        logger.info(' object-type: %s', self.object_type)
+        logger.info(' comment: %s', self.comment)
 
-        log.debug(self.text)
+        logger.debug(self.text)
 
     def _do(self):
         vcs.checkin(self.object_path, self.object_type, self.text, self.comment)
@@ -370,9 +364,9 @@ class EniCmd_check_out_object(BaseEniCmd):
         self.object_type = self.get('object-type')
         self.comment = self.get('comment')
 
-        log.info(' object-path: %s', self.object_path)
-        log.info(' object-type: %s', self.object_type)
-        log.info(' comment: %s', self.comment)
+        logger.info(' object-path: %s', self.object_path)
+        logger.info(' object-type: %s', self.object_type)
+        logger.info(' comment: %s', self.comment)
 
     def _do(self):
         vcs.checkout(self.object_path, self.object_type, self.comment)
@@ -384,7 +378,7 @@ class EniCmd_create_folder(BaseEniCmd):
 
         self.folder_path = self.get('folder-path')
 
-        log.info(' folder-path: %s', self.folder_path)
+        logger.info(' folder-path: %s', self.folder_path)
 
     def _do(self):
         vcs.mkdir(self.folder_path, 'Initial check-in (commit)')
@@ -398,11 +392,11 @@ class EniCmd_create_object(BaseEniCmd):
         self.object_type = self.get('object-type')
         self.no_history = self.get_bool('no-history')
 
-        log.info(' object-path: %s', self.object_path)
-        log.info(' object-type: %s', self.object_type)
-        log.info(' no-history: %s', self.no_history)
+        logger.info(' object-path: %s', self.object_path)
+        logger.info(' object-type: %s', self.object_type)
+        logger.info(' no-history: %s', self.no_history)
 
-        log.debug(self.text)
+        logger.debug(self.text)
 
     def _do(self):
         vcs.mkfile(self.object_path, self.object_type, self.text, 'Initial check-in (commit)')
@@ -414,10 +408,10 @@ class EniCmd_delete_folder(BaseEniCmd):
 
         self.folder_path = self.get('folder-path')
 
-        log.info(' folder-path: %s', self.folder_path)
+        logger.info(' folder-path: %s', self.folder_path)
 
     def _do(self):
-        log.warn('half-implemented cmd: %s', self._eni_cmd)
+        logger.warn('half-implemented cmd: %s', self._eni_cmd)
 
 
 class EniCmd_delete_object(BaseEniCmd):
@@ -427,11 +421,11 @@ class EniCmd_delete_object(BaseEniCmd):
         self.object_path = self.get('object-path')
         self.object_type = self.get('object-type')
 
-        log.info(' object-path: %s', self.object_path)
-        log.info(' object-type: %s', self.object_type)
+        logger.info(' object-path: %s', self.object_path)
+        logger.info(' object-type: %s', self.object_type)
 
     def _do(self):
-        log.warn('half-implemented cmd: %s', self._eni_cmd)
+        logger.warn('half-implemented cmd: %s', self._eni_cmd)
 
 
 class EniCmd_move_folder(BaseEniCmd):
@@ -441,11 +435,11 @@ class EniCmd_move_folder(BaseEniCmd):
         self.source_path = self.get('source-path')
         self.dest_path = self.get('dest-path')
 
-        log.info(' source-path: %s', self.source_path)
-        log.info(' dest-path: %s', self.dest_path)
+        logger.info(' source-path: %s', self.source_path)
+        logger.info(' dest-path: %s', self.dest_path)
 
     def _do(self):
-        log.warn('half-implemented cmd: %s', self._eni_cmd)
+        logger.warn('half-implemented cmd: %s', self._eni_cmd)
 
 
 class EniCmd_move_object(BaseEniCmd):
@@ -457,13 +451,13 @@ class EniCmd_move_object(BaseEniCmd):
         self.dest_path = self.get('dest-path')
         self.dest_type = self.get('dest-type')
 
-        log.info(' source-path: %s', self.source_path)
-        log.info(' source-type: %s', self.source_type)
-        log.info(' dest-path: %s', self.dest_path)
-        log.info(' dest-type: %s', self.dest_type)
+        logger.info(' source-path: %s', self.source_path)
+        logger.info(' source-type: %s', self.source_type)
+        logger.info(' dest-path: %s', self.dest_path)
+        logger.info(' dest-type: %s', self.dest_type)
 
     def _do(self):
-        log.warn('half-implemented cmd: %s', self._eni_cmd)
+        logger.warn('half-implemented cmd: %s', self._eni_cmd)
 
 
 class EniCmd_dir(BaseEniCmd):
@@ -475,10 +469,10 @@ class EniCmd_dir(BaseEniCmd):
         self.folders_only = self.get_bool('folders-only')
         self.no_change_date = self.get_bool('no-change-date')
 
-        log.info(' root-path: %s', self.root_path)
-        log.info(' recursive: %s', self.recursive)
-        log.info(' folders-only: %s', self.folders_only)
-        log.info(' no-change-date: %s', self.no_change_date)
+        logger.info(' root-path: %s', self.root_path)
+        logger.info(' recursive: %s', self.recursive)
+        logger.info(' folders-only: %s', self.folders_only)
+        logger.info(' no-change-date: %s', self.no_change_date)
 
     def _do(self):
         try:
@@ -492,19 +486,19 @@ class EniCmd_dir(BaseEniCmd):
             s += '<object-info>\n'
             if t == pysvn.node_kind.dir:
                 s += ' <folder-path>%s</folder-path>\n' % p
-                s += ' <access>%s</access>\n' % EniAccess(0x0FFF)
+                s += ' <access>%s</access>\n' % EniAccess('rwd')
             elif t == pysvn.node_kind.file:
                 n, e = os.path.splitext(p)
                 guid = vcs.get_object_type(e)
                 s += ' <object-path>%s</object-path>\n' % (n if guid else p)
                 s += ' <object-type>%s</object-type>\n' % guid
-                s += ' <access>%s</access>\n' % EniAccess(0x00FF)
+                s += ' <access>%s</access>\n' % EniAccess('rwd')
                 #s += '<change-date>%s</change-date>\n' % format_date_time(self.info.last_changed_date)
                 #if self.info.lock:
                 #    s += '<checked-out-by>%s</checked-out-by>\n' % self.info.lock.owner
                 #    s += '<check-out-comment>%s</check-out-comment>\n' % self.info.lock.comment
             else:
-                log.error('node kind none or unknown')
+                logger.error('node kind none or unknown')
             s += '</object-info>\n'
         return s
 
@@ -518,13 +512,13 @@ class EniCmd_reset_version(BaseEniCmd):
         self.label = self.get('label')
         self.version = self.get('version')
 
-        log.info(' object-path: %s', self.object_path)
-        log.info(' object-type: %s', self.object_type)
-        log.info(' label: %s', self.label)
-        log.info(' version: %s', self.version)
+        logger.info(' object-path: %s', self.object_path)
+        logger.info(' object-type: %s', self.object_type)
+        logger.info(' label: %s', self.label)
+        logger.info(' version: %s', self.version)
 
     def _do(self):
-        log.warn('half-implemented cmd: %s', self._eni_cmd)
+        logger.warn('half-implemented cmd: %s', self._eni_cmd)
 
 
 class EniCmd_set_folder_label(BaseEniCmd):
@@ -535,12 +529,12 @@ class EniCmd_set_folder_label(BaseEniCmd):
         self.label = self.get('label')
         self.comment = self.get('comment')
 
-        log.info(' folder-path: %s', self.folder_path)
-        log.info(' label: %s', self.label)
-        log.info(' comment: %s', self.comment)
+        logger.info(' folder-path: %s', self.folder_path)
+        logger.info(' label: %s', self.label)
+        logger.info(' comment: %s', self.comment)
 
     def _do(self):
-        log.warn('half-implemented cmd: %s', self._eni_cmd)
+        logger.warn('half-implemented cmd: %s', self._eni_cmd)
         vcs.set_rev_prop(self.folder_path, self.label)
 
 
@@ -554,11 +548,11 @@ class EniCmd_get_object(BaseEniCmd):
         self.label = self.get('label')
         self.version = self.get('version')
 
-        log.info(' object-path: %s', self.object_path)
-        log.info(' object-type: %s', self.object_type)
-        log.info(' checksum: %s', self.checksum)
-        log.info(' label: %s', self.label)
-        log.info(' version: %s', self.version)
+        logger.info(' object-path: %s', self.object_path)
+        logger.info(' object-type: %s', self.object_type)
+        logger.info(' checksum: %s', self.checksum)
+        logger.info(' label: %s', self.label)
+        logger.info(' version: %s', self.version)
 
     def _do(self):
         self.text = vcs.cat(self.object_path, self.object_type, self.version)
@@ -575,7 +569,7 @@ class EniCmd_get_object(BaseEniCmd):
         else:
             s += '<checked-out-by></checked-out-by>\n'
             s += '<check-out-comment></check-out-comment>\n'
-        s += '<access>%s</access>\n' % EniAccess(0x0700)
+        s += '<access>%s</access>\n' % EniAccess('rwd')
         return s
 
     def _data(self):
@@ -591,13 +585,13 @@ class EniCmd_get_object_info(BaseEniCmd):
         self.label = self.get('label')
         self.version = self.get('version')
 
-        log.info(' object-path: %s', self.object_path)
-        log.info(' object-type: %s', self.object_type)
-        log.info(' label: %s', self.label)
-        log.info(' version: %s', self.version)
+        logger.info(' object-path: %s', self.object_path)
+        logger.info(' object-type: %s', self.object_type)
+        logger.info(' label: %s', self.label)
+        logger.info(' version: %s', self.version)
 
     def _do(self):
-        log.warn('half-implemented cmd: %s', self._eni_cmd)
+        logger.warn('half-implemented cmd: %s', self._eni_cmd)
 
     def _response(self):
         d = {
@@ -606,7 +600,7 @@ class EniCmd_get_object_info(BaseEniCmd):
             'change-date' : '',
             'checked-out-by' : '',
             'check-out-comment' : '',
-            'access' : EniAccess(0x0700),
+            'access' : EniAccess('rwd'),
             }
         return d
 
@@ -617,7 +611,7 @@ class EniCmd_get_object_type(BaseEniCmd):
 
         self.guid = self.get('guid')
 
-        log.info(' guid: %s', self.guid)
+        logger.info(' guid: %s', self.guid)
 
     def _response(self):
         desc, ext = vcs.get_object_type_info(self.guid)
@@ -644,7 +638,7 @@ class EniCmd_register_object_types(BaseEniCmd):
         BaseEniCmd.__init__(self, eni_cmd, req_etree)
 
     def _do(self):
-        log.warn('half-implemented cmd: %s', self._eni_cmd)
+        logger.warn('half-implemented cmd: %s', self._eni_cmd)
 
 
 class EniCmd_get_server_settings(BaseEniCmd):
@@ -653,10 +647,10 @@ class EniCmd_get_server_settings(BaseEniCmd):
 
     def _response(self):
         return {
-            'comm-timeout' : 10,
-            'idle-interval' : 60,
-            'allow-anonymous' : 'false',
-            'client-expiration' : 10,
+            'comm-timeout' : 10, # seconds
+            'idle-interval' : 60, # seconds
+            'allow-anonymous' : 'true',
+            'client-expiration' : 2, # minutes
             'max-trials' : 10,
             'active-driver' : 'theni:svn',
             }
@@ -684,7 +678,7 @@ class EniCmd_get_driver_info(BaseEniCmd):
         BaseEniCmd.__init__(self, eni_cmd, req_etree)
 
     def _do(self):
-        log.warn('half-implemented cmd: %s', self._eni_cmd)
+        logger.warn('half-implemented cmd: %s', self._eni_cmd)
 
 
 class EniCmd_get_object_history(BaseEniCmd):
@@ -694,8 +688,8 @@ class EniCmd_get_object_history(BaseEniCmd):
         self.object_path = self.get('object-path')
         self.object_type = self.get('object-type')
 
-        log.info(' object-path: %s', self.object_path)
-        log.info(' object-type: %s', self.object_type)
+        logger.info(' object-path: %s', self.object_path)
+        logger.info(' object-type: %s', self.object_type)
 
     def _do(self):
         self.versions = vcs.log(self.object_path, self.object_type)
@@ -736,7 +730,7 @@ class EniCmd_get_folder_history(BaseEniCmd):
 
         self.folder_path = self.get('folder-path')
 
-        log.info(' folder-path: %s', self.folder_path)
+        logger.info(' folder-path: %s', self.folder_path)
 
     def _do(self):
         self.versions = vcs.log(self.folder_path)
@@ -751,7 +745,7 @@ class EniCmd_get_folder_history(BaseEniCmd):
             s += '<object-info>\n'
             s += '<folder-path>%s</folder-path>\n' % self.folder_path
             s += '<object-path>%s</object-path>\n' % '{9A9A3E90-D363-11d5-823E-0050DA6124B7}'
-            s += '<access>%s</access>\n' % EniAccess(0x00FF)
+            s += '<access>%s</access>\n' % EniAccess('rwd')
             s += '<change-date>%s</change-date>\n' % format_date_time(self.info.last_changed_date)
             s += '<checked-out-by></checked-out-by>\n'
             s += '<check-out-comment></check-out-comment>\n'
@@ -778,8 +772,8 @@ class EniCmd_get_permissions(BaseEniCmd):
         self.object_path = self.get('object-path')
         self.object_type = self.get('object-type')
 
-        log.info(' object-path: %s', self.object_path)
-        log.info(' object-type: %s', self.object_type)
+        logger.info(' object-path: %s', self.object_path)
+        logger.info(' object-type: %s', self.object_type)
 
     def _response(self):
         return {
@@ -812,8 +806,8 @@ class EniCmd_undo_check_out_object(BaseEniCmd):
         self.object_path = self.get('object-path')
         self.object_type = self.get('object-type')
 
-        log.info(' object-path: %s', self.object_path)
-        log.info(' object-type: %s', self.object_type)
+        logger.info(' object-path: %s', self.object_path)
+        logger.info(' object-type: %s', self.object_type)
 
     def _do(self):
         vcs.unlock(self.object_path, self.object_type)
@@ -821,24 +815,24 @@ class EniCmd_undo_check_out_object(BaseEniCmd):
 
 class EniHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        log.debug("%s - - [%s] %s\n" %
-                         (self.address_string(),
-                          self.log_date_time_string(),
-                          format%args))
+        logger.debug("%s - - [%s] %s\n" % (
+                self.address_string(),
+                self.log_date_time_string(),
+                format % args))
 
     protocol_version = 'HTTP/1.1'
-    firsttime = True
+    initialized = True
 
     def do_POST(self):
         try:
-            if EniHandler.firsttime:
-                EniHandler.firsttime = False
-                log.debug('request_version: %s', self.request_version)
-                log.debug('server_version: %s', self.server_version)
-                log.debug('sys_version: %s', self.sys_version)
+            if EniHandler.initialized:
+                EniHandler.initialized = False
+                logger.debug('request_version: %s', self.request_version)
+                logger.debug('server_version: %s', self.server_version)
+                logger.debug('sys_version: %s', self.sys_version)
 
             content_len = int(self.headers.getheader('content-length'))
-            #log.debug('content-length: %s', content_len)
+            #logger.debug('content-length: %s', content_len)
             content_rawxml = self.rfile.read(content_len)
 
             req_etree = ET.fromstring(content_rawxml)
@@ -849,20 +843,20 @@ class EniHandler(BaseHTTPRequestHandler):
             elif req_etree.tag == 'request':
                 eni_cmd_name = req_etree.attrib['command']
 
-                log.debug('eni command: %s', eni_cmd_name)
-                #log.debug('xml xmlroot attrib: %s', req_etree.attrib)
-                log.debug('raw request: %s', content_rawxml)
+                logger.debug('eni command: %s', eni_cmd_name)
+                #logger.debug('xml xmlroot attrib: %s', req_etree.attrib)
+                logger.debug('raw request: %s', content_rawxml)
 
                 try:
                     clazz = globals()['EniCmd_%s' % eni_cmd_name.replace('-', '_')]
                     req = clazz(eni_cmd_name, req_etree)
                     err = req.do()
                     if err:
-                       req = err
+                        req = err
 
                 except KeyError:
                     req = EniError(eni_cmd_name, 16390, 'command "%s" not supported' % eni_cmd_name)
-                    log.error('Unsupported request command: %s', eni_cmd_name)
+                    logger.error('Unsupported request command: %s', eni_cmd_name)
                     ET.dump(req_etree)
 
                 except EniError, e:
@@ -873,7 +867,7 @@ class EniHandler(BaseHTTPRequestHandler):
                 #    print e
 
             else:
-                log.error('Unsupported ENI request: %s (neither "handshake" nor "request")', req_etree.tag)
+                logger.error('Unsupported ENI request: %s (neither "handshake" nor "request")', req_etree.tag)
                 self.send_response(500)
                 return
 
@@ -885,48 +879,64 @@ class EniHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(rsp_content_xml)
 
-            log.debug('=== OK ===')
+            logger.debug('=== OK ===')
 
         except Exception, e:
-            log.error('EXCEPT %s', str(e))
+            logger.error('EXCEPT %s', str(e))
             self.send_response(500)
             raise
 
 
 def main():
     try:
-        opts, args = getopt.getopt(sys.argv[1:], 'c:hv', [
-            'config',
+        opts, args = getopt.getopt(sys.argv[1:], 'c:dD:hv', [
+            'config=',
+            'debug',
+            'db=',
             'help',
             'verbose',
             ])
     except getopt.GetoptError, err:
-        print str(err) # will print something like "option -a not recognized"
+        logger.error(err)
         sys.exit(__doc__)
 
-    log_level = log.WARN
+    log_level = logging.WARN
 
     config = None
+    xvcs = 'svn'
+    vcs_base = '../eni/'
 
     for o, a in opts:
         if o in ('-c', '--config'):
             config = a
+        elif o in ('-D', '--db'):
+            xvcs = a.lower()
         elif o in ('-d', '--debug'):
-            log_level = log.DEBUG
+            log_level = logging.DEBUG
         elif o in ('-h', '--help'):
-            usage()
+            sys.exit(__doc__)
         elif o in ('-v', '--verbose'):
-            log_level = log.INFO
+            log_level = logging.INFO
         else:
-            assert False, "unhandled option"
+            sys.exit('Unhandled command line option: %s' % o)
+
+    logger.setLevel(log_level)
+
+    if xvcs == 'svn':
+        global vcs
+        vcs = SvnDB(vcs_base)
+        for object_type in OBJECT_TYPES:
+            vcs.add_object_type_info(*object_type)
+    else:
+        sys.exit('Unknown database: %s' % vcs)
 
     HOST, PORT = 'localhost', 80
+    server = HTTPServer((HOST, PORT), EniHandler)
+    logger.info('started theni server on %s, port %s', HOST, PORT)
     try:
-        server = HTTPServer((HOST, PORT), EniHandler)
-        log.info('started eni svn server on %s, port %s', HOST, PORT)
         server.serve_forever()
     except KeyboardInterrupt:
-        log.warn('^C received, shutting down server')
+        logger.warn('^C received, shutting down theni server')
     finally:
         server.socket.close()
 

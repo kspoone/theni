@@ -1,4 +1,4 @@
-tenit
-=====
+theni, the ENI server
+=====================
 
-Tiny ENI
+TODO
